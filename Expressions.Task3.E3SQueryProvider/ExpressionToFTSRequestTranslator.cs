@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.Extensions.Primitives;
+using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
@@ -8,6 +9,7 @@ namespace Expressions.Task3.E3SQueryProvider
     public class ExpressionToFtsRequestTranslator : ExpressionVisitor
     {
         readonly StringBuilder _resultStringBuilder;
+        private const string _prefix = "Workstation:(";
 
         public ExpressionToFtsRequestTranslator()
         {
@@ -32,6 +34,46 @@ namespace Expressions.Task3.E3SQueryProvider
                 Visit(predicate);
 
                 return node;
+            } 
+            else if (node.Method.Name == "StartsWith")
+            {
+                VisitMember(node.Object as MemberExpression);
+                _resultStringBuilder.Append('(');
+                Visit(node.Arguments[0]);
+                _resultStringBuilder.Append("*)");
+
+                return node;
+            }
+            else if (node.Method.Name == "EndsWith")
+            {
+                VisitMember(node.Object as MemberExpression);
+                _resultStringBuilder.Append("(*");
+                Visit(node.Arguments[0]);
+                _resultStringBuilder.Append(')');
+                
+                return node;
+            }
+            else if (node.Method.Name == "Contains")
+            {
+                VisitMember(node.Object as MemberExpression);
+                _resultStringBuilder.Append("(*");
+                Visit(node.Arguments[0]);
+                _resultStringBuilder.Append("*)");
+
+                return node;
+            }
+            else if (node.Method.Name == "Equals")
+            {
+                if (node.Object.NodeType == ExpressionType.MemberAccess) 
+                {
+                    VisitMember(node.Object as MemberExpression);
+                    _resultStringBuilder.Append('(');
+                    Visit(node.Arguments[0]);
+                    _resultStringBuilder.Append(')');
+
+                    return node;
+                }
+               
             }
             return base.VisitMethodCall(node);
         }
@@ -41,17 +83,32 @@ namespace Expressions.Task3.E3SQueryProvider
             switch (node.NodeType)
             {
                 case ExpressionType.Equal:
-                    if (node.Left.NodeType != ExpressionType.MemberAccess)
-                        throw new NotSupportedException($"Left operand should be property or field: {node.NodeType}");
+                    if (node.Left.NodeType == ExpressionType.MemberAccess && node.Right.NodeType == ExpressionType.Constant)
+                    {
+                        Visit(node.Left);
+                        _resultStringBuilder.Append("(");
+                        Visit(node.Right);
+                        _resultStringBuilder.Append(")");
+                        break;
+                    }
+                    else
+                    {
+                        Visit(node.Right);
+                        _resultStringBuilder.Append("(");
+                        Visit(node.Left);
+                        _resultStringBuilder.Append(")");
+                        break;
+                    }
+                case ExpressionType.AndAlso:
+                    {
+                        _resultStringBuilder.Append("{\"statements\":[{\"query\":\"");
+                        Visit(node.Left);
+                        _resultStringBuilder.Append("\"},{\"query\":\"");
 
-                    if (node.Right.NodeType != ExpressionType.Constant)
-                        throw new NotSupportedException($"Right operand should be constant: {node.NodeType}");
-
-                    Visit(node.Left);
-                    _resultStringBuilder.Append("(");
-                    Visit(node.Right);
-                    _resultStringBuilder.Append(")");
-                    break;
+                        Visit(node.Right);
+                        _resultStringBuilder.Append("\"}]}\"");
+                        break;
+                    }
 
                 default:
                     throw new NotSupportedException($"Operation '{node.NodeType}' is not supported");
@@ -62,8 +119,7 @@ namespace Expressions.Task3.E3SQueryProvider
 
         protected override Expression VisitMember(MemberExpression node)
         {
-            _resultStringBuilder.Append(node.Member.Name).Append(":");
-
+            _resultStringBuilder.Append(node.Member.Name + ":");
             return base.VisitMember(node);
         }
 
